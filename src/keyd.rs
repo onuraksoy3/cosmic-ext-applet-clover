@@ -111,6 +111,7 @@ pub fn bindings(cfg: &Config) -> Vec<&'static str> {
     b.push(if cfg.emoji { "cmd+meta.space = M-A-space" } else { "cmd+meta.space = M-space" });
     b.push(if cfg.navigation { "cmd+meta.f = M-f11" } else { "cmd+meta.f = M-f" });
 
+    b.push("brightnessdown+brightnessup = M-A-f1");
     b.push("kbdillumdown+kbdillumup = M-A-f5");
     if cfg.fkeys {
         b.extend(["scale = M-w", "dashboard = M-a"]);

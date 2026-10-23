@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-use crate::integrations::Hardware;
 use crate::config::{Config, HOTKEYS, HOTKEY_LABELS, IDLE_LABELS, IDLE_SECS};
 use crate::fl;
-use crate::integrations::{self, Checks, Touchpad};
+use crate::integrations::{self, Checks, Hardware, Touchpad};
 use crate::keyd;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};

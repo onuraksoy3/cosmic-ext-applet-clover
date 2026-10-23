@@ -85,7 +85,8 @@ pub fn sync_cosmic_shortcuts(cfg: &Config) -> Result<(), String> {
         binding(false, false, false, false, "XF86KbdBrightnessDown"),
         on(cfg.kbd_backlight_keys, spawn("clover-kbd-backlight down")),
     ));
-    want.push((sa("F5"), spawn("clover autobrightness")));
+    want.push((sa("F1"), spawn("clover autobrightness")));
+    want.push((sa("F5"), spawn("clover autokbd")));
     // Hotkey: remove every candidate, then add the chosen one.
     for (id, _) in crate::config::HOTKEYS {
         if let Some(b) = hotkey_binding(id) {
@@ -370,7 +371,7 @@ pub fn run_checks() -> Checks {
         .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().any(|g| g == "keyd"))
         .unwrap_or(false);
     let keyd_layers = std::fs::read_to_string("/etc/keyd/default.conf")
-        .map(|s| s.contains("[cmd:C]") && s.contains("[cmd+opt]") && s.contains("[cmd+shift+control]") && s.contains("[cmd+meta]") && s.contains("kbdillumdown+kbdillumup") && s.contains("[app_switch:A]"))
+        .map(|s| s.contains("[cmd:C]") && s.contains("[cmd+opt]") && s.contains("[cmd+shift+control]") && s.contains("[cmd+meta]") && s.contains("brightnessdown+brightnessup") && s.contains("[app_switch:A]"))
         .unwrap_or(false);
     let helpers = in_path("zenity") && in_path("wl-copy");
     Checks { keyd_installed, keyd_running, keyd_group, keyd_layers, helpers }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# clover [toggle|on|off|status|dock|autobrightness] [--hotkey]
+# clover [toggle|on|off|status|dock|autobrightness|autokbd] [--hotkey]
 # Flips the Clover applet's saved state; the applet watches its config files and
 # re-applies the keyd binding itself, so this works from a hotkey or any script.
 d=$HOME/.config/cosmic/io.github.onuraksoy3.Clover/v1
@@ -17,6 +17,11 @@ case "$cmd" in
     if [ "$(readcfg auto_brightness false)" = true ]; then echo false > "$f"; state="off"; else echo true > "$f"; state="on"; fi
     [ "$(readcfg notify true)" = true ] && notify-send -a Clover -i display-brightness-symbolic -t 2000 "Auto brightness $state"
     exit 0 ;;
+  autokbd)
+    f=$d/auto_kbd
+    if [ "$(readcfg auto_kbd false)" = true ]; then echo false > "$f"; state="off"; else echo true > "$f"; state="on"; fi
+    [ "$(readcfg notify true)" = true ] && notify-send -a Clover -i keyboard-brightness-symbolic -t 2000 "Auto keyboard backlight $state"
+    exit 0 ;;
   dock)
     f=$HOME/.config/cosmic/com.system76.CosmicPanel.Dock/v1/autohide
     cur=$(cat "$f" 2>/dev/null || cat /usr/share/cosmic/com.system76.CosmicPanel.Dock/v1/autohide 2>/dev/null || echo None)
@@ -27,7 +32,7 @@ case "$cmd" in
     esac
     [ "$(readcfg notify true)" = true ] && notify-send -a Clover -i view-fullscreen-symbolic -t 2000 "Dock: $state"
     exit 0 ;;
-  *) echo "usage: clover [toggle|on|off|status|dock|autobrightness] [--hotkey]" >&2; exit 2 ;;
+  *) echo "usage: clover [toggle|on|off|status|dock|autobrightness|autokbd] [--hotkey]" >&2; exit 2 ;;
 esac
 echo "$new" > "$d/mac_keys"
 if [ "$new" = true ]; then state=on; else state=off; fi
