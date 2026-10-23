@@ -1,0 +1,13 @@
+[Unit]
+Description=Clover — ambient light automation (screen and keyboard backlight) for the MacBook on COSMIC
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/clover-sensord
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,100 @@
+#!/bin/bash
+# clover-sensord — MacBook ambient-light automation for COSMIC (runs as a user service).
+#   * auto screen brightness   (applesmc light sensor → COSMIC settings daemon, session D-Bus)
+#   * auto keyboard backlight  (same sensor → UPower KbdBacklight, system D-Bus; COSMIC draws the OSD)
+#   * keyboard backlight idle dim (swayidle via ext-idle-notify, if installed)
+# Settings are read from Clover's config files every cycle, so toggles apply live.
+set -u
+CFG=$HOME/.config/cosmic/io.github.onuraksoy3.Clover/v1
+LIGHT=/sys/devices/platform/applesmc.768/light
+# Brightness is written through logind (the same path COSMIC's settings daemon uses underneath) rather
+# than through the settings daemon or UPower: those two announce every change and COSMIC's OSD would
+# pop up on each adjustment. F5/F6 (clover-kbd-backlight) still go through UPower so the slider shows
+# when *you* press them.
+SESSION=/org/freedesktop/login1/session/${XDG_SESSION_ID:-auto}
+LOGIND="busctl --system call org.freedesktop.login1 $SESSION org.freedesktop.login1.Session SetBrightness ssu"
+STATE=/run/user/$(id -u)/clover-sensord; mkdir -p "$STATE"
+
+cfg() { local v; v=$(cat "$CFG/$1" 2>/dev/null | tr -d '" '); echo "${v:-$2}"; }
+log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+# Ambient light: Apple SMC (MacBooks) or a standard IIO illuminance sensor (many PC laptops).
+IIO=$(ls /sys/bus/iio/devices/iio:device*/in_illuminance_raw /sys/bus/iio/devices/iio:device*/in_illuminance_input 2>/dev/null | head -1)
+if [ -r "$LIGHT" ]; then SENSOR=applesmc; elif [ -n "$IIO" ]; then SENSOR=iio; else log "no ambient light sensor"; exit 1; fi
+
+# Display backlight: prefer the platform device (gmux_backlight on MacBooks), else the first one.
+BL=""; for d in /sys/class/backlight/*; do [ -e "$d" ] || continue; case "$(cat "$d/type" 2>/dev/null)" in platform|firmware) BL=$d; break;; esac; done
+[ -n "$BL" ] || BL=$(ls -d /sys/class/backlight/* 2>/dev/null | head -1)
+if [ -n "$BL" ]; then MAX_DISP=$(cat "$BL/max_brightness"); BL_NAME=$(basename "$BL"); else MAX_DISP=0; BL_NAME=""; fi
+KBD=$(ls -d /sys/class/leds/*kbd_backlight* 2>/dev/null | head -1)
+if [ -n "$KBD" ]; then KBD_MAX=$(cat "$KBD/max_brightness"); KBD_NAME=$(basename "$KBD"); else KBD_MAX=0; KBD_NAME=""; fi
+log "start: sensor=$SENSOR display=$BL_NAME max=$MAX_DISP kbd=$KBD_NAME max=$KBD_MAX"
+
+read_light() {
+  if [ "$SENSOR" = applesmc ]; then tr -d '()' < "$LIGHT" | awk -F, '{print ($1>$2)?$1:$2}'
+  else awk '{ v=$1/40; printf "%d", (v>255)?255:v }' "$IIO"   # IIO reports lux-ish; ~10000 lux → 255
+  fi
+}
+# 0..255 sensor → 0..100 percent, log curve (the sensor is roughly logarithmic already)
+light_pct() { awk -v l="$1" 'BEGIN{ if (l<0) l=0; p=100*log(1+l)/log(256); printf "%d", (p>100)?100:p }'; }
+disp_get() { cat "$BL/brightness" 2>/dev/null; }
+disp_set() { $LOGIND backlight "$BL_NAME" "$1" >/dev/null 2>&1; }
+kbd_get()  { cat "$KBD/brightness" 2>/dev/null; }
+kbd_set()  { $LOGIND leds "$KBD_NAME" "$1" >/dev/null 2>&1; }
+
+# ---- idle dimming of the keyboard backlight (swayidle speaks ext-idle-notify, which cosmic-comp provides)
+IDLE_PID=""
+idle_start() {
+  local secs=$1
+  command -v swayidle >/dev/null || return
+  swayidle -w timeout "$secs" "sh -c 'cat $KBD/brightness > $STATE/kbd-before-idle; $LOGIND leds $KBD_NAME 0 >/dev/null'" \
+             resume "sh -c '[ -f $STATE/kbd-before-idle ] && $LOGIND leds $KBD_NAME \$(cat $STATE/kbd-before-idle) >/dev/null; rm -f $STATE/kbd-before-idle'" &
+  IDLE_PID=$!
+  log "idle dim: armed at ${secs}s"
+}
+idle_stop() { [ -n "$IDLE_PID" ] && kill "$IDLE_PID" 2>/dev/null; IDLE_PID=""; rm -f "$STATE/kbd-before-idle"; }
+trap 'idle_stop; exit 0' TERM INT
+
+last_disp_written=-1; pause_until=0; idle_secs_active=""; prev_P=-1
+while true; do
+  auto_b=$(cfg auto_brightness false); auto_k=$(cfg auto_kbd false); idle=$(cfg kbd_idle_dim false)
+  min_pct=$(cfg min_brightness 20); idle_secs=$(cfg kbd_idle_secs 30); kbd_pct=$(cfg kbd_max_pct 60)
+  now=$(date +%s); L=$(read_light); P=$(light_pct "$L")
+
+  # ----- display
+  # COSMIC's settings daemon announces every backlight change (its OSD pops up), so write rarely:
+  # two consecutive agreeing readings, and only for a >= 10 % difference, jumping straight to target.
+  if [ "$auto_b" = true ] && [ "$MAX_DISP" -gt 0 ]; then
+    cur=$(disp_get)
+    if [ "$last_disp_written" -ge 0 ] && [ -n "$cur" ] && [ "$cur" -ne "$last_disp_written" ]; then
+      pause_until=$((now + 180)); last_disp_written=-1; log "display: manual change, auto paused 3 min"
+    fi
+    stable=0; [ "$prev_P" -ge 0 ] && [ $(( P - prev_P )) -le 5 ] && [ $(( prev_P - P )) -le 5 ] && stable=1
+    if [ "$now" -ge "$pause_until" ] && [ $stable = 1 ] && [ -n "$cur" ]; then
+      pct=$(( min_pct + (100 - min_pct) * P / 100 ))
+      target=$(( MAX_DISP * pct / 100 )); [ "$target" -lt 1 ] && target=1
+      diff=$(( (target - cur) * 100 / MAX_DISP )); [ $diff -lt 0 ] && diff=$(( -diff ))
+      if [ $diff -ge 10 ]; then disp_set "$target"; last_disp_written=$target; log "display: light=$L -> ${pct}%"; fi
+    fi
+  else
+    last_disp_written=-1
+  fi
+  prev_P=$P
+
+  # ----- keyboard backlight (dark → on, bright → off; linear below a light level of 40)
+  if [ "$auto_k" = true ] && [ "$KBD_MAX" -gt 0 ]; then
+    if [ "$L" -ge 40 ]; then want=0; else want=$(( KBD_MAX * kbd_pct / 100 * (40 - L) / 40 )); fi
+    if [ ! -f "$STATE/kbd-before-idle" ]; then
+      curk=$(kbd_get); [ -n "$curk" ] && [ "$curk" -ne "$want" ] && kbd_set "$want"
+    fi
+  fi
+
+  # ----- idle dim arm/disarm on config change
+  if [ "$idle" = true ] && [ "$KBD_MAX" -gt 0 ]; then
+    if [ "$idle_secs_active" != "$idle_secs" ]; then idle_stop; idle_start "$idle_secs"; idle_secs_active=$idle_secs; fi
+  else
+    [ -n "$idle_secs_active" ] && { idle_stop; idle_secs_active=""; }
+  fi
+
+  sleep 3
+done

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Clover
+Comment=Mac-style keys, trackpad and MacBook extras for the COSMIC panel
+Type=Application
+Icon=io.github.onuraksoy3.Clover
+Exec=clover-applet %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC;keyboard;mac;cmd;clover;keyd;
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicHoverPopup=Auto
+MimeType=

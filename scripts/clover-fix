@@ -1,0 +1,19 @@
+#!/bin/sh
+# clover-fix <user> <datadir> — run as root (pkexec). Repairs the pieces Clover needs:
+#   adds <user> to the keyd group, installs the companion keyd config (keeping a backup),
+#   reloads keyd, and installs small helpers (wl-clipboard, zenity) when apt is available.
+set -e
+user=$1; data=$2
+[ -n "$user" ] && [ -d "$data" ] || { echo "usage: clover-fix <user> <datadir>" >&2; exit 2; }
+getent group keyd >/dev/null && usermod -aG keyd "$user"
+if [ -f "$data/keyd-default.conf" ]; then
+  mkdir -p /etc/keyd
+  [ -f /etc/keyd/default.conf ] && cp /etc/keyd/default.conf "/etc/keyd/default.conf.bak.$(date +%s)"
+  cp "$data/keyd-default.conf" /etc/keyd/default.conf
+  keyd reload 2>/dev/null || systemctl restart keyd 2>/dev/null || true
+fi
+# Optional helpers: clipboard copy for screenshots, confirmation dialog for Empty Trash.
+if command -v apt-get >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -q wl-clipboard zenity libnotify-bin libglib2.0-bin >/dev/null 2>&1 || true
+fi
+echo ok

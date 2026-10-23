@@ -1,0 +1,32 @@
+[package]
+name = "clover-applet"
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+description = "Mac-style keys, trackpad and MacBook extras for the COSMIC panel"
+repository = "https://github.com/onuraksoy3/cosmic-ext-applet-clover"
+
+[build-dependencies]
+xdgen = "0.1"
+
+[dependencies]
+i18n-embed-fl = "0.10"
+rust-embed = "8.11"
+tokio = { version = "1.52.0", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+xkbcommon = "0.9"
+
+[dependencies.i18n-embed]
+version = "0.16"
+features = ["fluent-system", "desktop-requester"]
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+features = ["applet", "applet-token", "dbus-config", "multi-window", "tokio", "wayland", "winit"]
+
+# COSMIC's own config types, so the applet writes the same files Settings does.
+[dependencies.cosmic-settings-config]
+git = "https://github.com/pop-os/cosmic-settings-daemon"
+
+[dependencies.cosmic-comp-config]
+git = "https://github.com/pop-os/cosmic-comp"

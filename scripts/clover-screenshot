@@ -1,0 +1,42 @@
+#!/bin/sh
+# clover-screenshot screen|rect|window [clip]
+# macOS-style screenshots on COSMIC. The interactive picker always opens in the
+# mode it was last used in, so this presets that mode in the portal's config
+# (~/.config/cosmic/com.system76.CosmicPortal/v1/screenshot) before launching it.
+mode=$1; dest=${2:-file}
+cfg=$HOME/.config/cosmic/com.system76.CosmicPortal/v1/screenshot
+
+preset() { # $1 choice (Rectangle|Window), $2 save location (Pictures|Clipboard)
+  mkdir -p "$(dirname "$cfg")"
+  if [ -f "$cfg" ]; then
+    python3 - "$cfg" "$1" "$2" <<'PY'
+import re, sys
+path, choice, loc = sys.argv[1:4]
+s = open(path).read()
+s = re.sub(r'choice:\s*(Output\((?:None|Some\("[^"]*"\))\)|Rectangle|Window)', f'choice: {choice}', s)
+s = re.sub(r'save_location:\s*[A-Za-z]+', f'save_location: {loc}', s)
+open(path, 'w').write(s)
+PY
+  else
+    printf '(save_location: %s, choice: %s, last_rectangle: None)\n' "$2" "$1" > "$cfg"
+  fi
+}
+
+case "$mode" in
+  screen)
+    if [ "$dest" = clip ]; then
+      f=$(cosmic-screenshot --interactive=false --notify=false --save-dir /tmp) || exit 1
+      if wl-copy < "$f" 2>/dev/null; then
+        notify-send -a Clover -i camera-photo-symbolic -t 2000 "Screenshot copied to clipboard"
+      else
+        notify-send -a Clover -i dialog-error-symbolic "Clipboard copy needs wl-clipboard" "Saved to $f instead"
+        exit 1
+      fi
+      rm -f "$f"
+    else
+      cosmic-screenshot --interactive=false
+    fi ;;
+  rect)   [ "$dest" = clip ] && loc=Clipboard || loc=Pictures; preset Rectangle "$loc"; cosmic-screenshot ;;
+  window) [ "$dest" = clip ] && loc=Clipboard || loc=Pictures; preset Window "$loc"; cosmic-screenshot ;;
+  *) echo "usage: clover-screenshot screen|rect|window [clip]" >&2; exit 2 ;;
+esac

@@ -1,0 +1,38 @@
+#!/bin/sh
+# ⌘⇧⌫ — empty the trash, with a confirmation dialog (zenity) or, without zenity,
+# a two-press confirmation. There is no undo.
+dialog=0
+confirm() {
+  if command -v zenity >/dev/null 2>&1; then
+    dialog=1
+    zenity --question --title="Empty Trash" --text="Permanently delete everything in the Trash?" \
+      --ok-label="Empty Trash" --cancel-label="Cancel" --width=320 2>/dev/null
+    return $?
+  fi
+  stamp=/tmp/clover-empty-trash.$(id -u); now=$(date +%s)
+  if [ -f "$stamp" ] && [ $((now - $(cat "$stamp"))) -le 5 ]; then rm -f "$stamp"; return 0; fi
+  echo "$now" > "$stamp"
+  notify-send -a Clover -i user-trash-full-symbolic -t 5000 "Empty trash?" "Press ⌘⇧⌫ again within 5 seconds"
+  return 1
+}
+confirm || exit 0
+sweep() {
+  # gio skips orphaned entries (a file without its .trashinfo), which COSMIC Files still shows.
+  # Everything under a Trash directory is trash by definition, so sweep what gio left behind.
+  t=${XDG_DATA_HOME:-$HOME/.local/share}/Trash
+  for d in "$t/files" "$t/info" "$t/expunged"; do
+    [ -d "$d" ] && find "$d" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null
+  done
+  for m in /media/$USER/* /run/media/$USER/* /mnt/*; do
+    d="$m/.Trash-$(id -u)"
+    [ -d "$d" ] && find "$d/files" "$d/info" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null
+  done
+  return 0
+}
+if gio trash --empty 2>/dev/null; then
+  sweep
+  # The dialog was the confirmation; only the two-press fallback needs a result notification.
+  [ $dialog = 1 ] || notify-send -a Clover -i user-trash-symbolic -t 2500 "Trash emptied"
+else
+  notify-send -a Clover -i dialog-error-symbolic "Could not empty trash" "Is glib's gio installed? (libglib2.0-bin)"
+fi

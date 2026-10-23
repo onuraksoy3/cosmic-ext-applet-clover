@@ -1,0 +1,2 @@
+# Clover: let the logged-in user set the MacBook keyboard backlight (F5/F6).
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="smc::kbd_backlight", RUN+="/bin/chmod 0666 /sys/class/leds/%k/brightness"

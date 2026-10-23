@@ -1,0 +1,12 @@
+#!/bin/sh
+# clover-fnmode 1|2 — run as root (pkexec). 1 = media keys first (macOS default), 2 = F-keys first.
+# Applies immediately and persists via modprobe.d for the next boot.
+case "$1" in 1|2) ;; *) echo "usage: clover-fnmode 1|2" >&2; exit 2 ;; esac
+echo "$1" > /sys/module/hid_apple/parameters/fnmode || exit 1
+mkdir -p /etc/modprobe.d
+if [ -f /etc/modprobe.d/hid_apple.conf ] && grep -q 'fnmode=' /etc/modprobe.d/hid_apple.conf; then
+  sed -i "s/fnmode=[0-9]/fnmode=$1/" /etc/modprobe.d/hid_apple.conf
+else
+  echo "options hid_apple fnmode=$1" >> /etc/modprobe.d/hid_apple.conf
+fi
+echo ok

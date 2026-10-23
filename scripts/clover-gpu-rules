@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""clover-gpu-rules apply|clear — launch chosen apps on the discrete GPU.
+
+Writes .desktop overrides into ~/.local/share/applications with PrefersNonDefaultGPU=true
+(COSMIC honours it via switcheroo-control). Sources:
+  * every installed app in the Game category, when Clover's games_dgpu setting is true
+  * the names in Clover's dgpu_apps setting (comma-separated .desktop ids, with or without .desktop)
+Overrides carry X-Clover-GPU=auto so only Clover's own files are ever touched or removed.
+"""
+import os, re, sys, glob
+
+CFG = os.path.expanduser("~/.config/cosmic/io.github.onuraksoy3.Clover/v1")
+OUT = os.path.expanduser("~/.local/share/applications")
+MARK = "X-Clover-GPU=auto"
+SOURCES = ["/usr/share/applications", "/usr/local/share/applications",
+           "/var/lib/flatpak/exports/share/applications",
+           os.path.expanduser("~/.local/share/flatpak/exports/share/applications")]
+
+def cfg(name, default):
+    try:
+        with open(os.path.join(CFG, name)) as f:
+            return f.read().strip().strip('"')
+    except OSError:
+        return default
+
+def clear():
+    n = 0
+    for p in glob.glob(os.path.join(OUT, "*.desktop")):
+        try:
+            with open(p) as f:
+                if MARK in f.read():
+                    os.remove(p); n += 1
+        except OSError:
+            pass
+    return n
+
+def wanted():
+    ids = set()
+    if cfg("games_dgpu", "false") == "true":
+        for d in SOURCES:
+            for p in glob.glob(os.path.join(d, "*.desktop")):
+                try:
+                    s = open(p, errors="ignore").read()
+                except OSError:
+                    continue
+                m = re.search(r"^Categories=(.*)$", s, re.M)
+                if m and "Game" in m.group(1).split(";") and "NoDisplay=true" not in s:
+                    ids.add(os.path.basename(p))
+    for item in cfg("dgpu_apps", "").split(","):
+        item = item.strip()
+        if item:
+            ids.add(item if item.endswith(".desktop") else item + ".desktop")
+    return ids
+
+def source_for(desktop_id):
+    for d in SOURCES:
+        p = os.path.join(d, desktop_id)
+        if os.path.isfile(p):
+            return p
+    return None
+
+def apply():
+    clear()
+    os.makedirs(OUT, exist_ok=True)
+    done, missing = [], []
+    for did in sorted(wanted()):
+        src = source_for(did)
+        if not src:
+            missing.append(did); continue
+        s = open(src, errors="ignore").read()
+        if "PrefersNonDefaultGPU=" in s:
+            s = re.sub(r"^PrefersNonDefaultGPU=.*$", "PrefersNonDefaultGPU=true", s, flags=re.M)
+        else:
+            s = re.sub(r"^\[Desktop Entry\]\n", "[Desktop Entry]\nPrefersNonDefaultGPU=true\n", s, count=1, flags=re.M)
+        s = s.rstrip("\n") + "\n" + MARK + "\n"
+        with open(os.path.join(OUT, did), "w") as f:
+            f.write(s)
+        done.append(did)
+    return done, missing
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "apply"
+    if cmd == "clear":
+        print(f"removed {clear()}")
+    elif cmd == "apply":
+        done, missing = apply()
+        print(f"on dGPU: {len(done)}" + (f" · not found: {', '.join(missing)}" if missing else ""))
+    elif cmd == "list":
+        print("\n".join(sorted(wanted())))
+    else:
+        sys.exit("usage: clover-gpu-rules apply|clear|list")
