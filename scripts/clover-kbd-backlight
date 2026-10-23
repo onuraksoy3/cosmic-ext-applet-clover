@@ -1,5 +1,5 @@
 #!/bin/sh
-# clover-kbd-backlight up|down — MacBook keyboard backlight in 16 steps (F5/F6).
+# clover-kbd-backlight up|down — keyboard backlight in 16 steps (F5/F6 on Apple keyboards).
 # Goes through UPower, so COSMIC's own on-screen slider appears and no root is needed.
 U="busctl --system call org.freedesktop.UPower /org/freedesktop/UPower/KbdBacklight org.freedesktop.UPower.KbdBacklight"
 max=$($U GetMaxBrightness 2>/dev/null | awk '{print $2}')

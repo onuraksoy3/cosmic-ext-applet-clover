@@ -1,11 +1,11 @@
 app-title = Clover
-app-comment = Mac-style keys, trackpad and MacBook extras for the COSMIC panel
+app-comment = Mac-style keys, trackpad and laptop extras for the COSMIC panel
 app-keywords = keyboard;mac;cmd;clover;keyd;
 
 tab-keys = Keys
 tab-shortcuts = Shortcuts
 tab-trackpad = Trackpad
-tab-keyboard = MacBook
+tab-keyboard = Keyboard
 tab-apps = Apps
 tab-applet = Applet
 
@@ -50,7 +50,7 @@ scroll-speed = Scroll speed
 trackpad-note = Pinch zoom and two-finger swipe already work in Firefox/Files. Four-finger swipe = workspaces. No three-finger drag in COSMIC yet.
 
 kbd-backlight = F5 / F6 keyboard backlight
-kbd-backlight-hint = 16 steps, with COSMIC's on-screen slider
+kbd-backlight-hint = 16 steps, with COSMIC's on-screen slider (if your keyboard keys do nothing today)
 fn-standard = F1–F12 as standard function keys
 fn-standard-hint = Off: media keys first, hold fn for F-keys (macOS default)
 auto-brightness = Auto screen brightness
@@ -62,12 +62,14 @@ kbd-idle-dim = Dim keyboard backlight when idle
 kbd-idle-dim-hint = Switches the backlight off after a period without typing
 idle-after = Idle after
 needs-swayidle = Needs swayidle (idle detection for Wayland)
-no-light-sensor = No ambient light sensor found (applesmc) — auto brightness unavailable.
+no-light-sensor = No ambient light sensor found — auto brightness unavailable on this laptop.
 applying = Applying…
 unavailable = Unavailable
-games-dgpu = Games launch on the GT 750M
-games-dgpu-hint = Every app in the Game category gets a dGPU launch override
-apps-named = Also launch these on the GT 750M
+games-dgpu = Games launch on the { $gpu }
+games-dgpu-hint = Every app in the Game category gets a launch override for the { $gpu }
+dgpu-generic = discrete GPU
+no-dgpu = No second GPU detected — launch rules are for hybrid-graphics laptops.
+apps-named = Also launch these on the { $gpu }
 apps-named-hint = Desktop file names, comma-separated — e.g. org.blender.Blender, steam
 apps-placeholder = org.blender.Blender, steam
 apps-note = Overrides go to ~/.local/share/applications with an X-Clover-GPU marker; only those are ever removed. Right-click → "Run with…" still works for one-offs.

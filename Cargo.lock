@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "clover-applet"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cosmic-comp-config",
  "cosmic-settings-config",

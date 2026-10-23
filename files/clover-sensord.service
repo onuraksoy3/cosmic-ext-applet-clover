@@ -1,5 +1,5 @@
 [Unit]
-Description=Clover — ambient light automation (screen and keyboard backlight) for the MacBook on COSMIC
+Description=Clover — ambient light automation (screen and keyboard backlight) on COSMIC
 PartOf=graphical-session.target
 After=graphical-session.target
 

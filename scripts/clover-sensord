@@ -1,5 +1,5 @@
 #!/bin/bash
-# clover-sensord — MacBook ambient-light automation for COSMIC (runs as a user service).
+# clover-sensord — ambient-light automation for COSMIC laptops (runs as a user service).
 #   * auto screen brightness   (applesmc light sensor → COSMIC settings daemon, session D-Bus)
 #   * auto keyboard backlight  (same sensor → UPower KbdBacklight, system D-Bus; COSMIC draws the OSD)
 #   * keyboard backlight idle dim (swayidle via ext-idle-notify, if installed)

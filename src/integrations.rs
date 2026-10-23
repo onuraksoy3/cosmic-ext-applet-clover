@@ -606,3 +606,65 @@ pub fn install_clover_dock() -> Result<(), String> {
     }
     Err("no terminal emulator found".into())
 }
+
+// ------------------------------------------------------------- hardware
+
+/// What this machine has, so the UI only offers what applies.
+#[derive(Clone, Debug, Default)]
+pub struct Hardware {
+    /// Short name of the discrete GPU when the machine is a hybrid (switcheroo-control), e.g. "GeForce GT 750M".
+    pub dgpu: Option<String>,
+    /// Apple keyboard driver loaded (built-in MacBook keyboard or an external Apple keyboard).
+    pub apple_keyboard: bool,
+    pub kbd_backlight: bool,
+    pub light_sensor: bool,
+}
+
+pub fn detect_hardware() -> Hardware {
+    let dgpu = Command::new("switcherooctl")
+        .arg("list")
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let mut name: Option<String> = None;
+            let mut found = None;
+            for line in text.lines() {
+                let l = line.trim();
+                if let Some(n) = l.strip_prefix("Name:") {
+                    name = Some(n.trim().to_string());
+                } else if let Some(d) = l.strip_prefix("Default:") {
+                    if d.trim() == "no" {
+                        if let Some(n) = name.take() {
+                            found = Some(n);
+                            break;
+                        }
+                    }
+                }
+            }
+            found
+        })
+        .map(|full| {
+            // "NVIDIA Corporation GK107M [GeForce GT 750M Mac Edition]" → "GeForce GT 750M Mac Edition"
+            match (full.rfind('['), full.rfind(']')) {
+                (Some(a), Some(b)) if b > a => full[a + 1..b].to_string(),
+                _ => full,
+            }
+        });
+    let kbd_backlight = std::fs::read_dir("/sys/class/leds")
+        .map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().contains("kbd_backlight")))
+        .unwrap_or(false);
+    let iio = std::fs::read_dir("/sys/bus/iio/devices")
+        .map(|d| {
+            d.flatten().any(|e| {
+                e.path().join("in_illuminance_raw").exists() || e.path().join("in_illuminance_input").exists()
+            })
+        })
+        .unwrap_or(false);
+    Hardware {
+        dgpu,
+        apple_keyboard: Path::new("/sys/module/hid_apple").exists(),
+        kbd_backlight,
+        light_sensor: light_sensor_present() || iio,
+    }
+}

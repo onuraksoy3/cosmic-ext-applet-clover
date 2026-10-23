@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+use crate::integrations::Hardware;
 use crate::config::{Config, HOTKEYS, HOTKEY_LABELS, IDLE_LABELS, IDLE_SECS};
 use crate::fl;
 use crate::integrations::{self, Checks, Touchpad};
@@ -106,6 +107,7 @@ pub struct AppModel {
     min_brightness: f32,
     apps_input: String,
     light_sensor: bool,
+    hw: Hardware,
     swayidle: bool,
     inter_installed: bool,
     dock_installed: bool,
@@ -183,7 +185,8 @@ impl AppModel {
         self.checks = integrations::run_checks();
         self.fn_standard = integrations::read_fn_standard();
         self.min_brightness = self.config.min_brightness as f32;
-        self.light_sensor = integrations::light_sensor_present();
+        self.hw = integrations::detect_hardware();
+        self.light_sensor = self.hw.light_sensor;
         self.swayidle = integrations::swayidle_present();
         self.inter_installed = integrations::inter_font_installed();
         self.dock_installed = integrations::clover_dock_installed();
@@ -230,7 +233,11 @@ impl AppModel {
         }
     }
 
-    fn label(toggle: Toggle) -> String {
+    fn gpu_name(&self) -> String {
+        self.hw.dgpu.clone().unwrap_or_else(|| fl!("dgpu-generic"))
+    }
+
+    fn label(&self, toggle: Toggle) -> String {
         match toggle {
             Toggle::MacKeys => fl!("mac-keys"),
             Toggle::TapSuper => fl!("tap-super"),
@@ -249,7 +256,7 @@ impl AppModel {
             Toggle::AutoBrightness => fl!("auto-brightness"),
             Toggle::AutoKbd => fl!("auto-kbd"),
             Toggle::KbdIdleDim => fl!("kbd-idle-dim"),
-            Toggle::GamesDgpu => fl!("games-dgpu"),
+            Toggle::GamesDgpu => fl!("games-dgpu", gpu = self.gpu_name()),
             Toggle::InterFont => fl!("inter-font"),
             Toggle::DockHover => fl!("dock-hover"),
             Toggle::FnStandard => fl!("fn-standard"),
@@ -261,7 +268,7 @@ impl AppModel {
         }
     }
 
-    fn hint(toggle: Toggle) -> String {
+    fn hint(&self, toggle: Toggle) -> String {
         match toggle {
             Toggle::MacKeys => fl!("mac-keys-hint"),
             Toggle::TapSuper => fl!("tap-super-hint"),
@@ -280,7 +287,7 @@ impl AppModel {
             Toggle::AutoBrightness => fl!("auto-brightness-hint"),
             Toggle::AutoKbd => fl!("auto-kbd-hint"),
             Toggle::KbdIdleDim => fl!("kbd-idle-dim-hint"),
-            Toggle::GamesDgpu => fl!("games-dgpu-hint"),
+            Toggle::GamesDgpu => fl!("games-dgpu-hint", gpu = self.gpu_name()),
             Toggle::InterFont => fl!("inter-font-hint"),
             Toggle::DockHover => fl!("dock-hover-hint"),
             Toggle::FnStandard => fl!("fn-standard-hint"),
@@ -290,8 +297,8 @@ impl AppModel {
     }
 
     fn row<'a>(&self, toggle: Toggle, value: bool) -> Element<'a, Message> {
-        let hint = Self::hint(toggle);
-        let mut item = widget::settings::item::builder(Self::label(toggle));
+        let hint = self.hint(toggle);
+        let mut item = widget::settings::item::builder(self.label(toggle));
         if !hint.is_empty() {
             item = item.description(hint);
         }
@@ -316,10 +323,10 @@ impl AppModel {
     fn flatpak_row<'a>(&self, id: &'static str, toggle: Toggle, value: bool) -> Element<'a, Message> {
         match self.flatpaks.get(id).copied().unwrap_or(FlatpakState::Unknown) {
             FlatpakState::Installed => self.row(toggle, value),
-            FlatpakState::Installing => Self::item(Self::label(toggle), Self::hint(toggle), widget::text::body(fl!("installing"))),
+            FlatpakState::Installing => Self::item(self.label(toggle), self.hint(toggle), widget::text::body(fl!("installing"))),
             _ => Self::item(
-                Self::label(toggle),
-                Self::hint(toggle),
+                self.label(toggle),
+                self.hint(toggle),
                 widget::button::suggested(fl!("install")).on_press(Message::Install(id)),
             ),
         }
@@ -404,7 +411,7 @@ impl AppModel {
             Some(_) => widget::text::body(fl!("applying")).into(),
             None => widget::text::body(fl!("unavailable")).into(),
         };
-        col = col.add(Self::item(Self::label(Toggle::FnStandard), Self::hint(Toggle::FnStandard), fn_control));
+        col = col.add(Self::item(self.label(Toggle::FnStandard), self.hint(Toggle::FnStandard), fn_control));
         col = col.add(self.row(Toggle::KbdBacklightKeys, c.kbd_backlight_keys));
         if self.light_sensor {
             col = col.add(self.row(Toggle::AutoBrightness, c.auto_brightness));
@@ -415,11 +422,15 @@ impl AppModel {
                     .width(Length::Fixed(150.0));
                 col = col.add(Self::item(fl!("min-brightness"), format!("{}%", self.min_brightness as u32), slider));
             }
-            col = col.add(self.row(Toggle::AutoKbd, c.auto_kbd));
+            if self.hw.kbd_backlight {
+                col = col.add(self.row(Toggle::AutoKbd, c.auto_kbd));
+            }
         } else {
             col = col.add(Self::note(fl!("no-light-sensor")));
         }
-        if self.swayidle {
+        if !self.hw.kbd_backlight {
+            // nothing to dim
+        } else if self.swayidle {
             col = col.add(self.row(Toggle::KbdIdleDim, c.kbd_idle_dim));
             if c.kbd_idle_dim {
                 let selected = IDLE_SECS.iter().position(|s| *s == c.kbd_idle_secs);
@@ -427,7 +438,7 @@ impl AppModel {
             }
         } else {
             col = col.add(Self::item(
-                Self::label(Toggle::KbdIdleDim),
+                self.label(Toggle::KbdIdleDim),
                 fl!("needs-swayidle"),
                 widget::button::suggested(fl!("install")).on_press(Message::Apt("swayidle")),
             ));
@@ -462,8 +473,8 @@ impl AppModel {
                 .push(widget::text::caption(fl!("apps-named-hint")))
                 .push(widget::row::with_capacity(2).spacing(8).push(input).push(apply)))
             .add(Self::note(fl!("apps-note")))
-            .add(Self::item(Self::label(Toggle::InterFont), Self::hint(Toggle::InterFont), font_control))
-            .add(Self::item(Self::label(Toggle::DockHover), Self::hint(Toggle::DockHover), dock_control))
+            .add(Self::item(self.label(Toggle::InterFont), self.hint(Toggle::InterFont), font_control))
+            .add(Self::item(self.label(Toggle::DockHover), self.hint(Toggle::DockHover), dock_control))
             .into()
     }
 
@@ -689,7 +700,7 @@ impl cosmic::Application for AppModel {
                 }
                 if self.config.notify && !matches!(toggle, Toggle::Notify | Toggle::NotifyHotkey) {
                     let state = if value { fl!("on") } else { fl!("off") };
-                    integrations::notify(&Self::label(toggle), &state);
+                    integrations::notify(&self.label(toggle), &state);
                 }
             }
             Message::Hotkey(index) => {

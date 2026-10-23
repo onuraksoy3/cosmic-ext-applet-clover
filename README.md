@@ -9,7 +9,9 @@ screenshots (⌘⇧3 screen, ⌘⇧4 area, ⌘⇧5 window; add ⌃ to copy to th
 
 **Trackpad** — one-click Mac-style preset, natural scrolling, tap to click, two-finger secondary click, scroll speed.
 
-**MacBook** — F5/F6 keyboard backlight through UPower (COSMIC ignores the keys otherwise, but draws the slider), clipboard-history applet install.
+**Keyboard** — Fn mode (Apple keyboards), keyboard backlight keys through UPower (COSMIC draws the slider),
+**auto screen brightness** and **auto keyboard backlight** from the ambient light sensor (Apple SMC or standard IIO),
+keyboard backlight **idle dimming**, clipboard-history applet install. Rows appear only when the hardware exists.
 
 **Applet** — a global toggle shortcut, notifications, presets (Mac purist / Hybrid), export/import.
 
@@ -17,9 +19,6 @@ Keyboard behaviour is driven through the running `keyd` daemon over its control 
 (`keyd bind`), so no root is needed day to day. Screenshots, minimize, backlight keys and the
 toggle shortcut are written as COSMIC custom shortcuts, so they appear in Settings → Keyboard too.
 Trackpad settings are COSMIC's own.
-
-Clover can also install and toggle [Clover Dock](https://github.com/onuraksoy3/cosmic-ext-applet-clover-dock),
-the COSMIC dock app list with window previews on hover.
 
 ## Install
 
