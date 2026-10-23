@@ -18,6 +18,9 @@ Keyboard behaviour is driven through the running `keyd` daemon over its control 
 toggle shortcut are written as COSMIC custom shortcuts, so they appear in Settings → Keyboard too.
 Trackpad settings are COSMIC's own.
 
+Clover can also install and toggle [Clover Dock](https://github.com/onuraksoy3/cosmic-ext-applet-clover-dock),
+the COSMIC dock app list with window previews on hover.
+
 ## Install
 
 1. keyd (not packaged for Ubuntu 24.04):
