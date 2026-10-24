@@ -212,11 +212,13 @@ pub struct Touchpad {
     pub tap_to_click: bool,
     pub clickfinger: bool,
     pub scroll_factor: f64,
+    /// libinput pointer acceleration speed, -1..1.
+    pub speed: f64,
 }
 
 impl Default for Touchpad {
     fn default() -> Self {
-        Self { natural_scroll: false, tap_to_click: false, clickfinger: false, scroll_factor: 1.0 }
+        Self { natural_scroll: false, tap_to_click: false, clickfinger: false, scroll_factor: 1.0, speed: 0.0 }
     }
 }
 
@@ -240,6 +242,7 @@ pub fn read_touchpad() -> Touchpad {
         tap_to_click: cfg.tap_config.as_ref().map(|t| t.enabled).unwrap_or(false),
         clickfinger: matches!(cfg.click_method, Some(ClickMethod::Clickfinger)),
         scroll_factor: cfg.scroll_config.as_ref().and_then(|s| s.scroll_factor).unwrap_or(1.0),
+        speed: cfg.acceleration.as_ref().map(|a| a.speed).unwrap_or(0.0),
     }
 }
 
@@ -264,6 +267,13 @@ pub fn set_tap_to_click(enabled: bool) -> Result<(), String> {
 pub fn set_clickfinger(enabled: bool) -> Result<(), String> {
     edit_touchpad(|cfg| {
         cfg.click_method = Some(if enabled { ClickMethod::Clickfinger } else { ClickMethod::ButtonAreas })
+    })
+}
+
+pub fn set_pointer_speed(speed: f64) -> Result<(), String> {
+    edit_touchpad(|cfg| {
+        let accel = cfg.acceleration.get_or_insert_with(|| AccelConfig { profile: Some(AccelProfile::Adaptive), speed: 0.0 });
+        accel.speed = speed.clamp(-1.0, 1.0);
     })
 }
 
@@ -587,6 +597,18 @@ pub fn hover_preview_get() -> bool {
         .unwrap_or(false)
 }
 
+pub fn hover_delay_get() -> u64 {
+    cosmic_config::Config::new("com.system76.CosmicAppList", 1)
+        .ok()
+        .and_then(|c| c.get::<u64>("hover_preview_delay_ms").ok())
+        .unwrap_or(350)
+}
+
+pub fn hover_delay_set(ms: u64) -> Result<(), String> {
+    let c = cosmic_config::Config::new("com.system76.CosmicAppList", 1).map_err(|e| e.to_string())?;
+    c.set("hover_preview_delay_ms", ms).map_err(|e| format!("cannot set hover delay: {e}"))
+}
+
 pub fn hover_preview_set(on: bool) -> Result<(), String> {
     let c = cosmic_config::Config::new("com.system76.CosmicAppList", 1).map_err(|e| e.to_string())?;
     c.set("hover_preview", on).map_err(|e| format!("cannot set hover_preview: {e}"))
@@ -667,5 +689,31 @@ pub fn detect_hardware() -> Hardware {
         apple_keyboard: Path::new("/sys/module/hid_apple").exists(),
         kbd_backlight,
         light_sensor: light_sensor_present() || iio,
+    }
+}
+
+// ------------------------------------------------------------- hot corners
+
+/// Starts/restarts or stops the hot-corners daemon to match the config (it reads the config at start).
+pub fn sync_corners(cfg: &Config) -> Result<(), String> {
+    let unit = user_unit_dir().join("clover-corners.service");
+    if cfg.corners {
+        if !unit.exists() {
+            let data = data_dir().ok_or("Clover's helper files were not found; run `just install` again")?;
+            std::fs::create_dir_all(user_unit_dir()).map_err(|e| e.to_string())?;
+            std::fs::copy(data.join("clover-corners.service"), &unit)
+                .map_err(|e| format!("cannot install user unit: {e}"))?;
+            let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
+        }
+        let _ = Command::new("systemctl").args(["--user", "enable", "clover-corners.service"]).status();
+        let ok = Command::new("systemctl")
+            .args(["--user", "restart", "clover-corners.service"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok { Ok(()) } else { Err("could not start clover-corners (systemctl --user)".into()) }
+    } else {
+        let _ = Command::new("systemctl").args(["--user", "disable", "--now", "clover-corners.service"]).status();
+        Ok(())
     }
 }

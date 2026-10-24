@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.0 — 2026-10-24
+- Presets rescoped to keys and modifiers (Minimal, Hybrid, Mac purist), active preset highlighted; explanations moved to tooltips; clearer setting names; new sliders: pointer speed, keyboard backlight level, auto-brightness pause, dock hover delay, hot-corner dwell.
+- Presets reworked: Mac purist, Hybrid and new Minimal cover hot corners, automation and GPU rules, and keep personal settings (hotkey, named apps, custom commands, brightness floor, font).
+- New layout: macOS-style sidebar (Mac keys, Modifiers, Trackpad, Keyboard, Hot corners, Dock & look, Apps & graphics, Settings) with COSMIC-style section cards.
+- Hot corners (clover-corners daemon): per-corner actions — App Library, Workspaces overview, Launcher, Show desktop (built in, minimizes and restores all windows), or any command; corner size and dwell time. Defaults match macOS: top-left App Library, top-right overview, bottom-right Show desktop.
+
 ## v0.5.1 — 2026-10-23
 - F1+F2 together toggles auto screen brightness; F5+F6 together toggles auto keyboard backlight (was F5+F6 for screen brightness).
 

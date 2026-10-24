@@ -59,6 +59,7 @@ last_disp_written=-1; pause_until=0; idle_secs_active=""; prev_P=-1
 while true; do
   auto_b=$(cfg auto_brightness false); auto_k=$(cfg auto_kbd false); idle=$(cfg kbd_idle_dim false)
   min_pct=$(cfg min_brightness 20); idle_secs=$(cfg kbd_idle_secs 30); kbd_pct=$(cfg kbd_max_pct 60)
+  pause_secs=$(cfg brightness_pause_secs 180)
   now=$(date +%s); L=$(read_light); P=$(light_pct "$L")
 
   # ----- display
@@ -67,7 +68,7 @@ while true; do
   if [ "$auto_b" = true ] && [ "$MAX_DISP" -gt 0 ]; then
     cur=$(disp_get)
     if [ "$last_disp_written" -ge 0 ] && [ -n "$cur" ] && [ "$cur" -ne "$last_disp_written" ]; then
-      pause_until=$((now + 180)); last_disp_written=-1; log "display: manual change, auto paused 3 min"
+      pause_until=$((now + pause_secs)); last_disp_written=-1; log "display: manual change, auto paused ${pause_secs}s"
     fi
     stable=0; [ "$prev_P" -ge 0 ] && [ $(( P - prev_P )) -le 5 ] && [ $(( prev_P - P )) -le 5 ] && stable=1
     if [ "$now" -ge "$pause_until" ] && [ $stable = 1 ] && [ -n "$cur" ]; then

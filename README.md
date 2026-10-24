@@ -13,6 +13,13 @@ screenshots (⌘⇧3 screen, ⌘⇧4 area, ⌘⇧5 window; add ⌃ to copy to th
 **auto screen brightness** and **auto keyboard backlight** from the ambient light sensor (Apple SMC or standard IIO),
 keyboard backlight **idle dimming**, clipboard-history applet install. Rows appear only when the hardware exists.
 
+**Layout** — a sidebar like macOS System Settings: Mac keys, Modifiers, Trackpad, Keyboard, Hot corners, Dock & look,
+Apps & graphics, Settings.
+
+**Hot corners** — push the pointer into a corner: App Library, Workspaces overview, Launcher, Show desktop (built in) or any
+command, with size and dwell time. Implemented by a small daemon (`clover-corners`) that pins invisible layer-shell surfaces
+to the corners; COSMIC has no native hot corners yet.
+
 **Applet** — a global toggle shortcut, notifications, presets (Mac purist / Hybrid), export/import.
 
 Keyboard behaviour is driven through the running `keyd` daemon over its control socket

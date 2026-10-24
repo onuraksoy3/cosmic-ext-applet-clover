@@ -1,0 +1,12 @@
+[Unit]
+Description=Clover — hot corners
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/clover-corners
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

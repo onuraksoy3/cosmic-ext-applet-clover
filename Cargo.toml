@@ -1,6 +1,6 @@
 [package]
 name = "clover-applet"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "Mac-style keys, trackpad and MacBook extras for the COSMIC panel"
@@ -30,3 +30,6 @@ git = "https://github.com/pop-os/cosmic-settings-daemon"
 
 [dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
+
+[workspace]
+members = ["clover-corners"]

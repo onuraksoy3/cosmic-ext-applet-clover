@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-use crate::config::{Config, HOTKEYS, HOTKEY_LABELS, IDLE_LABELS, IDLE_SECS};
+const CORNER_DELAY_LABELS: [&str; 4] = ["100 ms", "200 ms", "350 ms", "500 ms"];
+
+use crate::config::{Config, CORNER_ACTIONS, CORNER_LABELS, HOTKEYS, HOTKEY_LABELS, IDLE_LABELS, IDLE_SECS};
 use crate::fl;
 use crate::integrations::{self, Checks, Hardware, Touchpad};
 use crate::keyd;
@@ -14,35 +16,55 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
     Keys,
-    Shortcuts,
+    Modifiers,
     Trackpad,
     Keyboard,
+    Corners,
+    Look,
     Apps,
-    Applet,
+    Settings,
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [Tab::Keys, Tab::Shortcuts, Tab::Trackpad, Tab::Keyboard, Tab::Apps, Tab::Applet];
+    const ALL: [Tab; 8] = [Tab::Keys, Tab::Modifiers, Tab::Trackpad, Tab::Keyboard, Tab::Corners, Tab::Look, Tab::Apps, Tab::Settings];
 
     fn icon(self) -> &'static str {
         match self {
             Tab::Keys => "input-keyboard-symbolic",
-            Tab::Shortcuts => "preferences-desktop-keyboard-shortcuts-symbolic",
+            Tab::Modifiers => "preferences-desktop-keyboard-shortcuts-symbolic",
             Tab::Trackpad => "input-touchpad-symbolic",
-            Tab::Keyboard => "computer-symbolic",
+            Tab::Keyboard => "keyboard-brightness-symbolic",
+            Tab::Corners => "view-fullscreen-symbolic",
+            Tab::Look => "video-display-symbolic",
             Tab::Apps => "applications-games-symbolic",
-            Tab::Applet => "emblem-system-symbolic",
+            Tab::Settings => "emblem-system-symbolic",
+        }
+    }
+
+    /// macOS-style tile colour behind the sidebar icon (r, g, b).
+    fn tint(self) -> (f32, f32, f32) {
+        match self {
+            Tab::Keys => (0.20, 0.47, 0.96),
+            Tab::Modifiers => (0.55, 0.36, 0.86),
+            Tab::Trackpad => (0.49, 0.49, 0.53),
+            Tab::Keyboard => (0.95, 0.60, 0.17),
+            Tab::Corners => (0.19, 0.70, 0.72),
+            Tab::Look => (0.91, 0.33, 0.56),
+            Tab::Apps => (0.26, 0.72, 0.35),
+            Tab::Settings => (0.49, 0.49, 0.53),
         }
     }
 
     fn title(self) -> String {
         match self {
             Tab::Keys => fl!("tab-keys"),
-            Tab::Shortcuts => fl!("tab-shortcuts"),
+            Tab::Modifiers => fl!("tab-modifiers"),
             Tab::Trackpad => fl!("tab-trackpad"),
             Tab::Keyboard => fl!("tab-keyboard"),
+            Tab::Corners => fl!("tab-corners"),
+            Tab::Look => fl!("tab-look"),
             Tab::Apps => fl!("tab-apps"),
-            Tab::Applet => fl!("tab-applet"),
+            Tab::Settings => fl!("tab-settings"),
         }
     }
 }
@@ -69,6 +91,7 @@ pub enum Toggle {
     GamesDgpu,
     InterFont,
     DockHover,
+    Corners,
     FnStandard,
     Notify,
     NotifyHotkey,
@@ -89,6 +112,7 @@ pub enum FlatpakState {
 pub enum Preset {
     MacPurist,
     Hybrid,
+    Minimal,
 }
 
 #[derive(Default)]
@@ -111,6 +135,14 @@ pub struct AppModel {
     inter_installed: bool,
     dock_installed: bool,
     dock_hover: bool,
+    corner_cmds: [String; 4],
+    corner_size: f32,
+    search: String,
+    pointer_speed: f32,
+    kbd_pct: f32,
+    pause_secs: f32,
+    hover_delay: f32,
+    corner_delay: f32,
     flatpaks: HashMap<&'static str, FlatpakState>,
     /// Most recent problem, if any.
     error: Option<String>,
@@ -146,6 +178,24 @@ pub enum Message {
     AppsInput(String),
     AppsApply,
     InstallDock,
+    ToggleAdvanced,
+    Search(String),
+    PointerSpeed(f32),
+    PointerSpeedCommit,
+    KbdPct(f32),
+    KbdPctCommit,
+    PauseSecs(f32),
+    PauseSecsCommit,
+    HoverDelay(f32),
+    HoverDelayCommit,
+    CornerDelaySlide(f32),
+    CornerDelayCommit,
+    CornerAction(usize, usize),
+    CornerCmd(usize, String),
+    CornerCmdApply(usize),
+    CornerSize(f32),
+    CornerSizeCommit,
+    CornerDelay(usize),
     InstallDone(&'static str, Result<(), String>),
     Reapply,
 }
@@ -169,6 +219,9 @@ impl AppModel {
         if let Err(e) = integrations::sync_gpu_rules(&self.config) {
             errors.push(e);
         }
+        if let Err(e) = integrations::sync_corners(&self.config) {
+            errors.push(e);
+        }
         self.error = if errors.is_empty() { None } else { Some(errors.join(" · ")) };
     }
 
@@ -190,6 +243,19 @@ impl AppModel {
         self.inter_installed = integrations::inter_font_installed();
         self.dock_installed = integrations::clover_dock_installed();
         self.dock_hover = integrations::hover_preview_get();
+        self.corner_size = self.config.corner_size as f32;
+        self.pointer_speed = self.touchpad.speed as f32;
+        self.kbd_pct = self.config.kbd_max_pct as f32;
+        self.pause_secs = self.config.brightness_pause_secs as f32;
+        self.hover_delay = integrations::hover_delay_get() as f32;
+        self.corner_delay = self.config.corner_delay as f32;
+        for (i, v) in self.corner_values().into_iter().enumerate() {
+            if let Some(cmd) = v.strip_prefix("cmd:") {
+                if self.corner_cmds[i].is_empty() {
+                    self.corner_cmds[i] = cmd.to_string();
+                }
+            }
+        }
         if self.apps_input.is_empty() {
             self.apps_input = self.config.dgpu_apps.clone();
         }
@@ -225,6 +291,7 @@ impl AppModel {
             Toggle::GamesDgpu => c.games_dgpu = value,
             Toggle::InterFont => c.inter_font = value,
             Toggle::DockHover => {}
+            Toggle::Corners => c.corners = value,
             Toggle::FnStandard => {}
             Toggle::Notify => c.notify = value,
             Toggle::NotifyHotkey => c.notify_hotkey = value,
@@ -258,6 +325,7 @@ impl AppModel {
             Toggle::GamesDgpu => fl!("games-dgpu", gpu = self.gpu_name()),
             Toggle::InterFont => fl!("inter-font"),
             Toggle::DockHover => fl!("dock-hover"),
+            Toggle::Corners => fl!("corners"),
             Toggle::FnStandard => fl!("fn-standard"),
             Toggle::Notify => fl!("notify"),
             Toggle::NotifyHotkey => fl!("notify-hotkey"),
@@ -289,20 +357,62 @@ impl AppModel {
             Toggle::GamesDgpu => fl!("games-dgpu-hint", gpu = self.gpu_name()),
             Toggle::InterFont => fl!("inter-font-hint"),
             Toggle::DockHover => fl!("dock-hover-hint"),
+            Toggle::Corners => fl!("corners-hint"),
             Toggle::FnStandard => fl!("fn-standard-hint"),
             Toggle::Clickfinger => fl!("clickfinger-hint"),
             _ => String::new(),
         }
     }
 
+    /// macOS-sized switch (the default COSMIC toggler is a little large for dense settings rows).
+    fn switch<'a>(value: bool, on: impl Fn(bool) -> Message + 'a) -> widget::Toggler<'a, Message> {
+        widget::toggler(value).size(20.0).on_toggle(on)
+    }
+
+    /// Rows whose hint carries real information (which keys do what) keep it inline; the rest explain
+    /// themselves in a tooltip so the list stays one line per setting.
+    fn inline_hint(toggle: Toggle) -> bool {
+        matches!(toggle, Toggle::TextEditing | Toggle::Navigation | Toggle::Screenshots | Toggle::Terminal | Toggle::Fkeys)
+    }
+
+    fn with_tip<'a>(content: impl Into<Element<'a, Message>>, tip: String) -> Element<'a, Message> {
+        if tip.is_empty() {
+            return content.into();
+        }
+        widget::tooltip(
+            content,
+            widget::container(widget::text::caption(tip)).max_width(320.0),
+            widget::tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
     fn row<'a>(&self, toggle: Toggle, value: bool) -> Element<'a, Message> {
         let hint = self.hint(toggle);
         let mut item = widget::settings::item::builder(self.label(toggle));
+        let mut tip = String::new();
         if !hint.is_empty() {
-            item = item.description(hint);
+            if Self::inline_hint(toggle) {
+                item = item.description(hint);
+            } else {
+                tip = hint;
+            }
         }
-        item.control(widget::toggler(value).on_toggle(move |v| Message::Set(toggle, v)))
-            .into()
+        Self::with_tip(item.control(Self::switch(value, move |v| Message::Set(toggle, v))), tip)
+    }
+
+    /// A slider row: value shown in the description, released value committed.
+    fn slider_row<'a>(
+        title: String,
+        shown: String,
+        range: std::ops::RangeInclusive<f32>,
+        step: f32,
+        value: f32,
+        on_change: fn(f32) -> Message,
+        on_release: Message,
+    ) -> Element<'a, Message> {
+        let slider = widget::slider(range, value, on_change).step(step).on_release(on_release).width(Length::Fixed(160.0));
+        Self::item(title, shown, slider)
     }
 
     /// A settings row with an arbitrary control and an optional description.
@@ -355,30 +465,65 @@ impl AppModel {
         Self::item(fl!("helpers"), fl!("helpers-hint"), control)
     }
 
+    fn section<'a>(&self, title: String) -> widget::settings::Section<'a, Message> {
+        widget::settings::section().header(widget::container(widget::text::caption_heading(title)).padding([6, 4, 0, 4]))
+    }
+
+    /// First card of a page: no header (the page title above it says what it is).
+    fn lead<'a>(&self) -> widget::settings::Section<'a, Message> {
+        widget::settings::section()
+    }
+
+    fn titled<'a>(&self, title: String, page: Element<'a, Message>) -> Element<'a, Message> {
+        widget::column::with_capacity(2)
+            .spacing(10)
+            .push(widget::container(widget::text::title4(title)).padding([0, 4]))
+            .push(page)
+            .into()
+    }
+
     fn page_keys<'a>(&self) -> Element<'a, Message> {
         let c = &self.config;
-        widget::list_column()
+        let current = c.matches_preset();
+        let pbtn = |label: String, key: &'static str, preset: Preset| -> Element<'a, Message> {
+            if current == Some(key) {
+                widget::button::suggested(label).on_press(Message::ApplyPreset(preset)).into()
+            } else {
+                widget::button::standard(label).on_press(Message::ApplyPreset(preset)).into()
+            }
+        };
+        let presets = widget::row::with_capacity(3)
+            .spacing(6)
+            .push(pbtn(fl!("preset-minimal"), "minimal", Preset::Minimal))
+            .push(pbtn(fl!("preset-hybrid"), "hybrid", Preset::Hybrid))
+            .push(pbtn(fl!("preset-purist"), "purist", Preset::MacPurist));
+        let main = self
+            .lead()
             .add(self.row(Toggle::MacKeys, c.mac_keys))
+            .add(Self::item(fl!("presets"), if current.is_some() { fl!("presets-hint") } else { fl!("presets-custom") }, presets));
+        let shortcuts = self
+            .section(fl!("sec-shortcuts"))
+            .add(self.row(Toggle::TextEditing, c.text_editing))
+            .add(self.row(Toggle::Navigation, c.navigation))
+            .add(self.row(Toggle::Screenshots, c.screenshots))
+            .add(self.row(Toggle::Fkeys, c.fkeys))
+            .add(self.row(Toggle::Terminal, c.terminal))
+            .add(self.flatpak_row(integrations::SMILE, Toggle::Emoji, c.emoji))
+            .add(self.row(Toggle::DockHotkey, c.dock_hotkey))
+            .add(self.helpers_row());
+        widget::settings::view_column(vec![main.into(), shortcuts.into()]).into()
+    }
+
+    fn page_modifiers<'a>(&self) -> Element<'a, Message> {
+        let c = &self.config;
+        let sec = self
+            .lead()
             .add(self.row(Toggle::TapSuper, c.tap_super))
             .add(self.row(Toggle::CmdSpaceLauncher, c.cmd_space_launcher))
             .add(self.row(Toggle::RightCmd, c.right_cmd))
             .add(self.row(Toggle::CtrlSuper, c.ctrl_super))
-            .add(self.row(Toggle::CtrlSpaces, c.ctrl_spaces))
-            .into()
-    }
-
-    fn page_shortcuts<'a>(&self) -> Element<'a, Message> {
-        let c = &self.config;
-        widget::list_column()
-            .add(self.row(Toggle::TextEditing, c.text_editing))
-            .add(self.row(Toggle::Navigation, c.navigation))
-            .add(self.helpers_row())
-            .add(self.row(Toggle::Screenshots, c.screenshots))
-            .add(self.row(Toggle::Fkeys, c.fkeys))
-            .add(self.row(Toggle::DockHotkey, c.dock_hotkey))
-            .add(self.flatpak_row(integrations::SMILE, Toggle::Emoji, c.emoji))
-            .add(self.row(Toggle::Terminal, c.terminal))
-            .into()
+            .add(self.row(Toggle::CtrlSpaces, c.ctrl_spaces));
+        widget::settings::view_column(vec![sec.into()]).into()
     }
 
     fn page_trackpad<'a>(&self) -> Element<'a, Message> {
@@ -387,7 +532,8 @@ impl AppModel {
             .step(0.1_f32)
             .on_release(Message::ScrollFactorCommit)
             .width(Length::Fixed(150.0));
-        widget::list_column()
+        let sec = self
+            .lead()
             .add(Self::item(
                 fl!("mac-trackpad"),
                 fl!("mac-trackpad-hint"),
@@ -396,113 +542,261 @@ impl AppModel {
             .add(self.row(Toggle::NaturalScroll, t.natural_scroll))
             .add(self.row(Toggle::TapToClick, t.tap_to_click))
             .add(self.row(Toggle::Clickfinger, t.clickfinger))
-            .add(Self::item(fl!("scroll-speed"), String::new(), slider))
-            .add(Self::note(fl!("trackpad-note")))
-            .into()
+            .add(Self::slider_row(fl!("pointer-speed"), String::new(), -1.0..=1.0, 0.1, self.pointer_speed, Message::PointerSpeed, Message::PointerSpeedCommit))
+            .add(Self::item(fl!("scroll-speed"), String::new(), slider));
+        widget::settings::view_column(vec![sec.into(), Self::note(fl!("trackpad-note"))]).into()
     }
 
     fn page_keyboard<'a>(&self) -> Element<'a, Message> {
         let c = &self.config;
-        let mut col = widget::list_column();
-        // Fn mode
-        let fn_control: Element<'a, Message> = match self.fn_standard {
-            Some(v) if !self.fixing => widget::toggler(v).on_toggle(|x| Message::Set(Toggle::FnStandard, x)).into(),
-            Some(_) => widget::text::body(fl!("applying")).into(),
-            None => widget::text::body(fl!("unavailable")).into(),
-        };
-        col = col.add(Self::item(self.label(Toggle::FnStandard), self.hint(Toggle::FnStandard), fn_control));
-        col = col.add(self.row(Toggle::KbdBacklightKeys, c.kbd_backlight_keys));
+        let mut sections: Vec<Element<'a, Message>> = Vec::new();
         if self.light_sensor {
-            col = col.add(self.row(Toggle::AutoBrightness, c.auto_brightness));
+            let mut auto = self.lead().add(self.row(Toggle::AutoBrightness, c.auto_brightness));
             if c.auto_brightness {
                 let slider = widget::slider(5.0..=60.0, self.min_brightness, Message::MinBrightness)
                     .step(5.0_f32)
                     .on_release(Message::MinBrightnessCommit)
                     .width(Length::Fixed(150.0));
-                col = col.add(Self::item(fl!("min-brightness"), format!("{}%", self.min_brightness as u32), slider));
+                auto = auto.add(Self::item(fl!("min-brightness"), format!("{}%", self.min_brightness as u32), slider));
+            }
+            if c.auto_brightness {
+                auto = auto.add(Self::slider_row(fl!("pause-secs"), format!("{} s", self.pause_secs as u32), 30.0..=600.0, 30.0, self.pause_secs, Message::PauseSecs, Message::PauseSecsCommit));
             }
             if self.hw.kbd_backlight {
-                col = col.add(self.row(Toggle::AutoKbd, c.auto_kbd));
+                auto = auto.add(self.row(Toggle::AutoKbd, c.auto_kbd));
+                if c.auto_kbd {
+                    auto = auto.add(Self::slider_row(fl!("kbd-level"), format!("{}%", self.kbd_pct as u32), 10.0..=100.0, 10.0, self.kbd_pct, Message::KbdPct, Message::KbdPctCommit));
+                }
+                if self.swayidle {
+                    auto = auto.add(self.row(Toggle::KbdIdleDim, c.kbd_idle_dim));
+                    if c.kbd_idle_dim {
+                        let selected = IDLE_SECS.iter().position(|s| *s == c.kbd_idle_secs);
+                        auto = auto.add(Self::item(fl!("idle-after"), String::new(), widget::dropdown(&IDLE_LABELS, selected, Message::IdleSecs)));
+                    }
+                } else {
+                    auto = auto.add(Self::item(
+                        self.label(Toggle::KbdIdleDim),
+                        fl!("needs-swayidle"),
+                        widget::button::suggested(fl!("install")).on_press(Message::Apt("swayidle")),
+                    ));
+                }
             }
-        } else {
-            col = col.add(Self::note(fl!("no-light-sensor")));
+            sections.push(auto.into());
         }
-        if !self.hw.kbd_backlight {
-            // nothing to dim
-        } else if self.swayidle {
-            col = col.add(self.row(Toggle::KbdIdleDim, c.kbd_idle_dim));
-            if c.kbd_idle_dim {
-                let selected = IDLE_SECS.iter().position(|s| *s == c.kbd_idle_secs);
-                col = col.add(Self::item(fl!("idle-after"), String::new(), widget::dropdown(&IDLE_LABELS, selected, Message::IdleSecs)));
-            }
-        } else {
-            col = col.add(Self::item(
-                self.label(Toggle::KbdIdleDim),
-                fl!("needs-swayidle"),
-                widget::button::suggested(fl!("install")).on_press(Message::Apt("swayidle")),
-            ));
+        let mut keys = self.section(fl!("sec-keyboard"));
+        if self.hw.apple_keyboard {
+            let fn_control: Element<'a, Message> = match self.fn_standard {
+                Some(v) if !self.fixing => Self::switch(v, |x| Message::Set(Toggle::FnStandard, x)).into(),
+                Some(_) => widget::text::body(fl!("applying")).into(),
+                None => widget::text::body(fl!("unavailable")).into(),
+            };
+            keys = keys.add(Self::item(self.label(Toggle::FnStandard), self.hint(Toggle::FnStandard), fn_control));
         }
-        col = col.add(self.clipboard_row());
-        col.add(Self::note(fl!("keyboard-note"))).into()
+        if self.hw.kbd_backlight {
+            keys = keys.add(self.row(Toggle::KbdBacklightKeys, c.kbd_backlight_keys));
+        }
+        keys = keys.add(self.clipboard_row());
+        sections.push(keys.into());
+        if !self.light_sensor {
+            sections.push(Self::note(fl!("no-light-sensor")));
+        }
+        sections.push(Self::note(fl!("keyboard-note")));
+        widget::settings::view_column(sections).into()
     }
 
-    fn page_apps<'a>(&'a self) -> Element<'a, Message> {
+    fn page_corners<'a>(&'a self) -> Element<'a, Message> {
         let c = &self.config;
-        let input = widget::text_input(fl!("apps-placeholder"), &self.apps_input)
-            .on_input(Message::AppsInput)
-            .width(Length::Fill);
-        let apply = widget::button::standard(fl!("apply")).on_press(Message::AppsApply);
+        let mut corners = self.lead().add(self.row(Toggle::Corners, c.corners));
+        if c.corners {
+            for r in self.corner_rows() {
+                corners = corners.add(r);
+            }
+        }
+        let mut sections: Vec<Element<'a, Message>> = vec![corners.into()];
+        if c.corners {
+            let size = widget::slider(4.0..=40.0, self.corner_size, Message::CornerSize)
+                .step(2.0_f32)
+                .on_release(Message::CornerSizeCommit)
+                .width(Length::Fixed(150.0));
+            let tuning = self
+                .section(fl!("sec-tuning"))
+                .add(Self::item(fl!("corner-size"), format!("{} px", self.corner_size as u32), size))
+                .add(Self::slider_row(fl!("corner-delay"), format!("{} ms", self.corner_delay as u32), 50.0..=800.0, 50.0, self.corner_delay, Message::CornerDelaySlide, Message::CornerDelayCommit));
+            sections.push(tuning.into());
+        }
+        widget::settings::view_column(sections).into()
+    }
+
+    fn page_look<'a>(&self) -> Element<'a, Message> {
+        let c = &self.config;
         let dock_control: Element<'a, Message> = if self.dock_installed {
-            widget::toggler(self.dock_hover).on_toggle(|v| Message::Set(Toggle::DockHover, v)).into()
+            Self::switch(self.dock_hover, |v| Message::Set(Toggle::DockHover, v)).into()
         } else {
             widget::button::suggested(fl!("install")).on_press(Message::InstallDock).into()
         };
         let font_control: Element<'a, Message> = if self.inter_installed {
-            widget::toggler(c.inter_font).on_toggle(|v| Message::Set(Toggle::InterFont, v)).into()
+            Self::switch(c.inter_font, |v| Message::Set(Toggle::InterFont, v)).into()
         } else if self.fixing {
             widget::text::body(fl!("installing")).into()
         } else {
             widget::button::suggested(fl!("install")).on_press(Message::Apt("fonts-inter")).into()
         };
-        widget::list_column()
-            .add(self.row(Toggle::GamesDgpu, c.games_dgpu))
-            .add(widget::column::with_capacity(3)
-                .spacing(6)
-                .push(widget::text::body(fl!("apps-named")))
-                .push(widget::text::caption(fl!("apps-named-hint")))
-                .push(widget::row::with_capacity(2).spacing(8).push(input).push(apply)))
-            .add(Self::note(fl!("apps-note")))
-            .add(Self::item(self.label(Toggle::InterFont), self.hint(Toggle::InterFont), font_control))
-            .add(Self::item(self.label(Toggle::DockHover), self.hint(Toggle::DockHover), dock_control))
-            .into()
+        let mut sec = self
+            .lead()
+            .add(Self::with_tip(Self::item(self.label(Toggle::DockHover), String::new(), dock_control), self.hint(Toggle::DockHover)));
+        if self.dock_installed && self.dock_hover {
+            sec = sec.add(Self::slider_row(fl!("hover-delay"), format!("{} ms", self.hover_delay as u32), 100.0..=800.0, 50.0, self.hover_delay, Message::HoverDelay, Message::HoverDelayCommit));
+        }
+        sec = sec.add(Self::with_tip(Self::item(self.label(Toggle::InterFont), String::new(), font_control), self.hint(Toggle::InterFont)));
+        widget::settings::view_column(vec![sec.into()]).into()
     }
 
-    fn page_applet<'a>(&self) -> Element<'a, Message> {
+    fn page_apps<'a>(&'a self) -> Element<'a, Message> {
+        let c = &self.config;
+        if self.hw.dgpu.is_none() {
+            return widget::settings::view_column(vec![Self::note(fl!("no-dgpu"))]).into();
+        }
+        let input = widget::text_input(fl!("apps-placeholder"), &self.apps_input)
+            .on_input(Message::AppsInput)
+            .width(Length::Fill);
+        let apply = widget::button::standard(fl!("apply")).on_press(Message::AppsApply);
+        let sec = self
+            .lead()
+            .add(self.row(Toggle::GamesDgpu, c.games_dgpu))
+            .add(
+                widget::column::with_capacity(3)
+                    .spacing(6)
+                    .push(widget::text::body(fl!("apps-named", gpu = self.gpu_name())))
+                    .push(widget::text::caption(fl!("apps-named-hint")))
+                    .push(widget::row::with_capacity(2).spacing(8).push(input).push(apply)),
+            );
+        widget::settings::view_column(vec![sec.into(), Self::note(fl!("apps-note"))]).into()
+    }
+
+    fn toggle_value(&self, t: Toggle) -> Option<bool> {
+        let c = &self.config;
+        Some(match t {
+            Toggle::MacKeys => c.mac_keys,
+            Toggle::TapSuper => c.tap_super,
+            Toggle::CmdSpaceLauncher => c.cmd_space_launcher,
+            Toggle::RightCmd => c.right_cmd,
+            Toggle::CtrlSuper => c.ctrl_super,
+            Toggle::CtrlSpaces => c.ctrl_spaces,
+            Toggle::TextEditing => c.text_editing,
+            Toggle::Navigation => c.navigation,
+            Toggle::Screenshots => c.screenshots,
+            Toggle::Fkeys => c.fkeys,
+            Toggle::Terminal => c.terminal,
+            Toggle::DockHotkey => c.dock_hotkey,
+            Toggle::Emoji => c.emoji,
+            Toggle::NaturalScroll => self.touchpad.natural_scroll,
+            Toggle::TapToClick => self.touchpad.tap_to_click,
+            Toggle::Clickfinger => self.touchpad.clickfinger,
+            Toggle::KbdBacklightKeys => c.kbd_backlight_keys,
+            Toggle::AutoBrightness => c.auto_brightness,
+            Toggle::AutoKbd => c.auto_kbd,
+            Toggle::KbdIdleDim => c.kbd_idle_dim,
+            Toggle::GamesDgpu => c.games_dgpu,
+            Toggle::InterFont => c.inter_font,
+            Toggle::DockHover => self.dock_hover,
+            Toggle::Corners => c.corners,
+            Toggle::Notify => c.notify,
+            Toggle::NotifyHotkey => c.notify_hotkey,
+            Toggle::FnStandard => return None,
+        })
+    }
+
+    const SEARCHABLE: [Toggle; 26] = [
+        Toggle::MacKeys, Toggle::TapSuper, Toggle::CmdSpaceLauncher, Toggle::RightCmd, Toggle::CtrlSuper,
+        Toggle::CtrlSpaces, Toggle::TextEditing, Toggle::Navigation, Toggle::Screenshots, Toggle::Fkeys,
+        Toggle::Terminal, Toggle::DockHotkey, Toggle::Emoji, Toggle::NaturalScroll, Toggle::TapToClick,
+        Toggle::Clickfinger, Toggle::KbdBacklightKeys, Toggle::AutoBrightness, Toggle::AutoKbd,
+        Toggle::KbdIdleDim, Toggle::GamesDgpu, Toggle::InterFont, Toggle::DockHover, Toggle::Corners,
+        Toggle::Notify, Toggle::NotifyHotkey,
+    ];
+
+    fn page_search<'a>(&self) -> Element<'a, Message> {
+        let q = self.search.to_lowercase();
+        let mut sec = self.section(fl!("search-results"));
+        let mut n = 0;
+        for t in Self::SEARCHABLE {
+            let hit = self.label(t).to_lowercase().contains(&q) || self.hint(t).to_lowercase().contains(&q);
+            if !hit {
+                continue;
+            }
+            if let Some(v) = self.toggle_value(t) {
+                sec = sec.add(self.row(t, v));
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return widget::settings::view_column(vec![Self::note(fl!("search-none"))]).into();
+        }
+        widget::settings::view_column(vec![sec.into()]).into()
+    }
+
+    fn corner_values(&self) -> [String; 4] {
+        let c = &self.config;
+        [c.corner_tl.clone(), c.corner_tr.clone(), c.corner_bl.clone(), c.corner_br.clone()]
+    }
+
+    fn set_corner_value(&mut self, i: usize, v: String) {
+        match i {
+            0 => self.config.corner_tl = v,
+            1 => self.config.corner_tr = v,
+            2 => self.config.corner_bl = v,
+            _ => self.config.corner_br = v,
+        }
+    }
+
+    fn corner_rows<'a>(&'a self) -> Vec<Element<'a, Message>> {
+        let names = [fl!("corner-tl"), fl!("corner-tr"), fl!("corner-bl"), fl!("corner-br")];
+        let values = self.corner_values();
+        let mut rows: Vec<Element<'a, Message>> = Vec::new();
+        for (i, name) in names.into_iter().enumerate() {
+            let v = &values[i];
+            let selected = if v.starts_with("cmd:") {
+                Some(5)
+            } else {
+                CORNER_ACTIONS.iter().position(|a| a == v)
+            };
+            rows.push(Self::item(name, String::new(), widget::dropdown(&CORNER_LABELS, selected, move |ix| Message::CornerAction(i, ix))));
+            if v.starts_with("cmd:") {
+                let input = widget::text_input(fl!("corner-cmd-placeholder"), &self.corner_cmds[i])
+                    .on_input(move |s| Message::CornerCmd(i, s))
+                    .width(Length::Fill);
+                rows.push(
+                    widget::row::with_capacity(2)
+                        .spacing(8)
+                        .push(input)
+                        .push(widget::button::standard(fl!("apply")).on_press(Message::CornerCmdApply(i)))
+                        .into(),
+                );
+            }
+        }
+        rows
+    }
+
+    fn page_settings<'a>(&'a self) -> Element<'a, Message> {
         let c = &self.config;
         let selected = HOTKEYS.iter().position(|(id, _)| *id == c.hotkey);
-        let presets = widget::row::with_capacity(2)
-            .spacing(8)
-            .push(widget::button::standard(fl!("preset-purist")).on_press(Message::ApplyPreset(Preset::MacPurist)))
-            .push(widget::button::standard(fl!("preset-hybrid")).on_press(Message::ApplyPreset(Preset::Hybrid)));
         let io = widget::row::with_capacity(2)
             .spacing(8)
             .push(widget::button::standard(fl!("export")).on_press(Message::Export))
             .push(widget::button::standard(fl!("import")).on_press(Message::Import));
-        widget::list_column()
+        let general = self
+            .lead()
             .add(Self::item(fl!("hotkey"), fl!("hotkey-hint"), widget::dropdown(&HOTKEY_LABELS, selected, Message::Hotkey)))
             .add(self.row(Toggle::NotifyHotkey, c.notify_hotkey))
-            .add(self.row(Toggle::Notify, c.notify))
-            .add(Self::item(fl!("presets"), fl!("presets-hint"), presets))
-            .add(Self::item(
-                fl!("settings-file"),
-                fl!("settings-file-hint", path = integrations::export_path_display()),
-                io,
-            ))
+            .add(self.row(Toggle::Notify, c.notify));
+        let maintenance = self
+            .section(fl!("sec-maintenance"))
+            .add(Self::item(fl!("settings-file"), fl!("settings-file-hint", path = integrations::export_path_display()), io))
             .add(Self::item(fl!("reapply"), String::new(), widget::button::standard("⟳").on_press(Message::Reapply)))
-            .into()
+            .add(Self::item(fl!("fix-it"), fl!("fix-it-hint"), widget::button::standard(fl!("fix-it")).on_press(Message::FixIt)));
+        widget::settings::view_column(vec![general.into(), maintenance.into()]).into()
     }
 
-    /// Shown instead of the tabs while something essential is missing.
     fn page_first_run<'a>(&self) -> Element<'a, Message> {
         let ch = self.checks;
         let line = |ok: bool, text: String| {
@@ -555,7 +849,7 @@ impl cosmic::Application for AppModel {
 
         let mut nav = segmented_button::SingleSelectModel::default();
         for tab in Tab::ALL {
-            nav.insert().icon(widget::icon::from_name(tab.icon()).size(18)).data(tab);
+            nav.insert().text(tab.title()).icon(widget::icon::from_name(tab.icon()).size(16)).data(tab);
         }
         nav.activate_position(0);
 
@@ -583,34 +877,78 @@ impl cosmic::Application for AppModel {
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
         let active = self.nav.active_data::<Tab>().copied().unwrap_or(Tab::Keys);
 
-        let page: Element<'_, Message> = if !self.checks.all_ok() && !matches!(active, Tab::Applet) {
+        let page: Element<'_, Message> = if !self.search.trim().is_empty() {
+            self.page_search()
+        } else if !self.checks.all_ok() && !matches!(active, Tab::Settings) {
             self.page_first_run()
         } else {
-            match active {
+            let inner = match active {
                 Tab::Keys => self.page_keys(),
-                Tab::Shortcuts => self.page_shortcuts(),
+                Tab::Modifiers => self.page_modifiers(),
                 Tab::Trackpad => self.page_trackpad(),
                 Tab::Keyboard => self.page_keyboard(),
+                Tab::Corners => self.page_corners(),
+                Tab::Look => self.page_look(),
                 Tab::Apps => self.page_apps(),
-                Tab::Applet => self.page_applet(),
-            }
+                Tab::Settings => self.page_settings(),
+            };
+            self.titled(active.title(), inner)
         };
 
-        let tabs = widget::tab_bar::horizontal(&self.nav)
-            .on_activate(Message::Tab)
-            .minimum_button_width(44)
-            .maximum_button_width(96)
-            .button_height(36)
-            .button_spacing(4)
-            .width(Length::Fill);
+        let sidebar = {
+            let mut col = widget::column::with_capacity(Tab::ALL.len()).spacing(2).width(Length::Fixed(170.0));
+            for tab in Tab::ALL {
+                if matches!(tab, Tab::Apps) && self.hw.dgpu.is_none() {
+                    continue;
+                }
+                let selected = tab == active;
+                let (r, g, b) = tab.tint();
+                let tile = widget::container(widget::icon::from_name(tab.icon()).size(14).icon())
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .align_x(cosmic::iced::Alignment::Center)
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .class(cosmic::theme::Container::custom(move |_| cosmic::iced::widget::container::Style {
+                        background: Some(cosmic::iced::Color::from_rgb(r, g, b).into()),
+                        border: cosmic::iced::Border { radius: 6.0.into(), ..Default::default() },
+                        text_color: Some(cosmic::iced::Color::WHITE),
+                        icon_color: Some(cosmic::iced::Color::WHITE),
+                        ..Default::default()
+                    }));
+                let label = widget::row::with_capacity(2)
+                    .spacing(10)
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .push(tile)
+                    .push(widget::text::body(tab.title()));
+                let entity = self.nav.iter().find(|e| self.nav.data::<Tab>(*e) == Some(&tab));
+                let mut button = widget::button::custom(label).width(Length::Fill).padding([6, 8]);
+                button = if selected { button.class(cosmic::theme::Button::Suggested) } else { button.class(cosmic::theme::Button::Text) };
+                if let Some(e) = entity {
+                    button = button.on_press(Message::Tab(e));
+                }
+                col = col.push(button);
+            }
+            col
+        };
 
-        let heading = widget::container(widget::text::title4(active.title())).padding([4, 10]);
+        let body_page = widget::scrollable(page).width(Length::Fixed(470.0)).height(Length::Fixed(440.0));
 
-        let body = widget::column::with_capacity(3)
-            .spacing(6)
-            .push(tabs)
-            .push(heading)
-            .push(widget::scrollable(page).width(Length::Fill).height(Length::Fixed(340.0)));
+        let mut search = widget::search_input(fl!("search"), &self.search)
+            .on_input(Message::Search)
+            .width(Length::Fixed(170.0));
+        if !self.search.is_empty() {
+            search = search.on_clear(Message::Search(String::new()));
+        }
+
+        let left = widget::column::with_capacity(2)
+            .spacing(10)
+            .push(search)
+            .push(sidebar);
+
+        let body = widget::row::with_capacity(2)
+            .spacing(12)
+            .push(left)
+            .push(body_page);
 
         let status = match (&self.error, &self.info) {
             (Some(err), _) => widget::text::caption(fl!("status-error", err = err.clone())),
@@ -618,19 +956,42 @@ impl cosmic::Application for AppModel {
             (None, None) => widget::text::caption(fl!("status-ok")),
         };
 
-        let footer = widget::row::with_capacity(2)
+        let footer = widget::row::with_capacity(3)
             .spacing(12)
-            .push(widget::toggler(self.config.mac_keys).on_toggle(|v| Message::Set(Toggle::MacKeys, v)))
-            .push(status);
+            .align_y(cosmic::iced::Alignment::Center)
+            .push(Self::switch(self.config.mac_keys, |v| Message::Set(Toggle::MacKeys, v)))
+            .push(widget::text::body(fl!("mac-keys")))
+            .push(widget::container(status).width(Length::Fill).align_x(cosmic::iced::Alignment::End));
 
         let content = widget::column::with_capacity(3)
             .spacing(8)
             .padding([8, 10])
+            .width(Length::Fixed(672.0))
             .push(body)
             .push(widget::divider::horizontal::default())
             .push(footer);
 
-        self.core.applet.popup_container(content).into()
+        // libcosmic's popup_container pins the width to 360 px; build the same frame at our width.
+        static POPUP_ID: std::sync::LazyLock<widget::Id> = std::sync::LazyLock::new(|| widget::Id::new("clover-popup"));
+        let framed = widget::container(content).class(cosmic::theme::Container::custom(|theme| {
+            let cosmic = theme.cosmic();
+            let bg = cosmic.background(theme.transparent).base;
+            cosmic::iced::widget::container::Style {
+                text_color: Some(cosmic.background(theme.transparent).on.into()),
+                background: Some(cosmic::iced::Color::from(bg).into()),
+                border: cosmic::iced::Border {
+                    radius: cosmic.corner_radii.radius_m.into(),
+                    width: 1.0,
+                    color: cosmic.background(theme.transparent).divider.into(),
+                },
+                shadow: Default::default(),
+                icon_color: Some(cosmic.background(theme.transparent).on.into()),
+                snap: true,
+            }
+        }));
+        widget::autosize::autosize(framed, POPUP_ID.clone())
+            .limits(cosmic::iced::core::layout::Limits::NONE.min_width(672.0).max_width(672.0).min_height(1.0).max_height(620.0))
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -727,10 +1088,11 @@ impl cosmic::Application for AppModel {
                 match preset {
                     Preset::MacPurist => self.config.mac_purist(),
                     Preset::Hybrid => self.config.hybrid(),
+                    Preset::Minimal => self.config.minimal(),
                 }
                 self.save_all();
                 self.apply_all();
-                if matches!(preset, Preset::MacPurist) {
+                if matches!(preset, Preset::MacPurist | Preset::Hybrid) {
                     self.error = integrations::apply_mac_trackpad().err().or(self.error.take());
                     self.touchpad = integrations::read_touchpad();
                     self.scroll_factor = self.touchpad.scroll_factor as f32;
@@ -859,10 +1221,69 @@ impl cosmic::Application for AppModel {
                     self.save_all();
                 }
             }
+            Message::Search(s) => self.search = s,
+            Message::PointerSpeed(v) => self.pointer_speed = v,
+            Message::PointerSpeedCommit => {
+                self.touchpad.speed = self.pointer_speed as f64;
+                self.error = integrations::set_pointer_speed(self.pointer_speed as f64).err();
+            }
+            Message::KbdPct(v) => self.kbd_pct = v,
+            Message::KbdPctCommit => {
+                self.config.kbd_max_pct = self.kbd_pct.round() as u32;
+                self.save_all();
+            }
+            Message::PauseSecs(v) => self.pause_secs = v,
+            Message::PauseSecsCommit => {
+                self.config.brightness_pause_secs = self.pause_secs.round() as u32;
+                self.save_all();
+            }
+            Message::HoverDelay(v) => self.hover_delay = v,
+            Message::HoverDelayCommit => {
+                self.error = integrations::hover_delay_set(self.hover_delay.round() as u64).err();
+            }
+            Message::CornerDelaySlide(v) => self.corner_delay = v,
+            Message::CornerDelayCommit => {
+                self.config.corner_delay = self.corner_delay.round() as u32;
+                self.save_all();
+                self.error = integrations::sync_corners(&self.config).err();
+            }
+            Message::ToggleAdvanced => {
+                self.config.advanced = !self.config.advanced;
+                self.save_all();
+            }
             Message::InstallDock => {
                 match integrations::install_clover_dock() {
                     Ok(()) => self.info = Some(fl!("dock-installing")),
                     Err(e) => self.error = Some(e),
+                }
+            }
+            Message::CornerAction(i, ix) => {
+                let v = match CORNER_ACTIONS.get(ix).copied().unwrap_or("off") {
+                    "cmd" => format!("cmd:{}", self.corner_cmds[i]),
+                    other => other.to_string(),
+                };
+                self.set_corner_value(i, v);
+                self.save_all();
+                self.error = integrations::sync_corners(&self.config).err();
+            }
+            Message::CornerCmd(i, s) => self.corner_cmds[i] = s,
+            Message::CornerCmdApply(i) => {
+                let v = format!("cmd:{}", self.corner_cmds[i].trim());
+                self.set_corner_value(i, v);
+                self.save_all();
+                self.error = integrations::sync_corners(&self.config).err();
+            }
+            Message::CornerSize(v) => self.corner_size = v,
+            Message::CornerSizeCommit => {
+                self.config.corner_size = self.corner_size.round() as u32;
+                self.save_all();
+                self.error = integrations::sync_corners(&self.config).err();
+            }
+            Message::CornerDelay(ix) => {
+                if let Some(d) = [100u32, 200, 350, 500].get(ix) {
+                    self.config.corner_delay = *d;
+                    self.save_all();
+                    self.error = integrations::sync_corners(&self.config).err();
                 }
             }
             Message::AppsInput(text) => self.apps_input = text,
@@ -895,10 +1316,10 @@ impl cosmic::Application for AppModel {
                         None,
                     );
                     popup_settings.positioner.size_limits = Limits::NONE
-                        .max_width(480.0)
-                        .min_width(440.0)
+                        .max_width(700.0)
+                        .min_width(300.0)
                         .min_height(300.0)
-                        .max_height(520.0);
+                        .max_height(600.0);
                     get_popup(popup_settings)
                 };
             }

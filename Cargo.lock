@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "clover-applet"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "cosmic-comp-config",
  "cosmic-settings-config",
@@ -769,6 +769,14 @@ dependencies = [
  "tokio",
  "xdgen",
  "xkbcommon 0.9.0",
+]
+
+[[package]]
+name = "clover-corners"
+version = "0.1.0"
+dependencies = [
+ "cosmic-client-toolkit",
+ "cosmic-protocols",
 ]
 
 [[package]]

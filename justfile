@@ -30,7 +30,7 @@ clean-dist: clean clean-vendor
 
 # Compiles with debug profile
 build-debug *args:
-    cargo build {{args}}
+    cargo build --workspace {{args}}
 
 # Compiles with release profile
 build-release *args: (build-debug '--release' args)
@@ -63,12 +63,14 @@ install:
     install -Dm0755 scripts/clover-gpu-rules {{base-dir}}/bin/clover-gpu-rules
     install -Dm0755 scripts/clover-fnmode {{base-dir}}/share/clover/clover-fnmode
     install -Dm0644 files/clover-sensord.service {{base-dir}}/share/clover/clover-sensord.service
+    install -Dm0755 {{cargo-target-dir}}/release/clover-corners {{base-dir}}/bin/clover-corners
+    install -Dm0644 files/clover-corners.service {{base-dir}}/share/clover/clover-corners.service
     install -Dm0755 scripts/clover-fix {{base-dir}}/share/clover/clover-fix
     install -Dm0644 examples/keyd-default.conf {{base-dir}}/share/clover/keyd-default.conf
 
 # Uninstalls installed files
 uninstall:
-    rm -f {{bin-dst}} {{desktop-dst}} {{icon-dst}} {{base-dir}}/bin/clover {{base-dir}}/bin/clover-empty-trash {{base-dir}}/bin/clover-kbd-backlight {{base-dir}}/bin/clover-screenshot {{base-dir}}/bin/clover-sensord {{base-dir}}/bin/clover-gpu-rules
+    rm -f {{bin-dst}} {{desktop-dst}} {{icon-dst}} {{base-dir}}/bin/clover {{base-dir}}/bin/clover-empty-trash {{base-dir}}/bin/clover-kbd-backlight {{base-dir}}/bin/clover-screenshot {{base-dir}}/bin/clover-sensord {{base-dir}}/bin/clover-gpu-rules {{base-dir}}/bin/clover-corners
     rm -rf {{base-dir}}/share/clover
 
 # Vendor dependencies locally
